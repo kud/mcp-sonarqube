@@ -1,0 +1,31 @@
+{
+  "name": "sonarqube",
+  "description": "SonarQube MCP server for explaining quality gates, searching issues and reading measures",
+  "version": "0.1.0",
+  "tools": [
+    {
+      "name": "sonarqube_quality_gate",
+      "description": "Explain why a quality gate is red: status, new-code period, and conditions with the failing ones first (ratings as A-E)"
+    },
+    {
+      "name": "sonarqube_issues",
+      "description": "Search a project's unresolved issues with file, line, rule, severity, type, message, author and creation date"
+    },
+    {
+      "name": "sonarqube_measures",
+      "description": "Read measures for a project, e.g. coverage, bugs, new_coverage, reliability_rating (ratings shown as A-E)"
+    },
+    {
+      "name": "sonarqube_issue_source",
+      "description": "Show the source lines around a line of a component, as returned by sonarqube_issues (component and line)"
+    },
+    {
+      "name": "sonarqube_branches",
+      "description": "List a project's branches with their quality gate status and last analysis date"
+    },
+    {
+      "name": "sonarqube_projects",
+      "description": "List or search projects the token can see"
+    }
+  ]
+}
