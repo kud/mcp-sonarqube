@@ -44,7 +44,7 @@
   "bugs": {
     "url": "https://github.com/kud/mcp-sonarqube/issues"
   },
-  "homepage": "https://github.com/kud/mcp-sonarqube#readme",
+  "homepage": "https://kud.io/projects/mcp-sonarqube",
   "engines": {
     "node": ">=22.0.0"
   },
