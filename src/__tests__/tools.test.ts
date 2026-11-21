@@ -1,6 +1,17 @@
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs"
 import { createServer, type Server } from "node:http"
 import type { AddressInfo } from "node:net"
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+} from "vitest"
 import {
   branches,
   issueSource,
@@ -21,6 +32,7 @@ interface Hit {
 const hits: Hit[] = []
 let server: Server
 let failWith: number | undefined
+let serverUrl: string
 
 const sourceFile = Array.from({ length: 30 }, (_, i) => `line ${i + 1}`).join(
   "\n",
@@ -123,7 +135,8 @@ beforeAll(async () => {
   })
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve))
   const { port } = server.address() as AddressInfo
-  process.env.SONAR_HOST_URL = `http://127.0.0.1:${port}`
+  serverUrl = `http://127.0.0.1:${port}`
+  process.env.SONARQUBE_HOST = serverUrl
   process.env.SONARQUBE_TOKEN = TOKEN
   process.env.XDG_CONFIG_HOME = "/nonexistent-config-home"
 })
@@ -293,15 +306,197 @@ describe("projects", () => {
   })
 })
 
-describe("configuration", () => {
-  it("reports a missing host as an error", async () => {
-    const host = process.env.SONAR_HOST_URL
-    delete process.env.SONAR_HOST_URL
-    try {
-      const result = await qualityGate({ project: "my-project" })
-      expect(text(result)).toContain("No SonarQube host configured")
-    } finally {
-      process.env.SONAR_HOST_URL = host
+const SETTING_NAMES = [
+  "SONARQUBE_HOST",
+  "SONARQUBE_DASH_HOST",
+  "SONAR_HOST_URL",
+  "SONARQUBE_TOKEN",
+  "SONAR_TOKEN",
+  "SONARQUBE_DASH_TOKEN",
+  "XDG_CONFIG_HOME",
+]
+
+/** Runs `work` with exactly `vars` set among the SonarQube settings, then restores them. */
+const withSettings = async <T>(
+  vars: Record<string, string>,
+  work: () => Promise<T>,
+): Promise<T> => {
+  const saved = Object.fromEntries(
+    SETTING_NAMES.map((name) => [name, process.env[name]]),
+  )
+  for (const name of SETTING_NAMES) delete process.env[name]
+  Object.assign(process.env, { XDG_CONFIG_HOME: "/nonexistent-config-home" })
+  Object.assign(process.env, vars)
+  try {
+    return await work()
+  } finally {
+    for (const name of SETTING_NAMES) {
+      if (saved[name] === undefined) delete process.env[name]
+      else process.env[name] = saved[name]
     }
+  }
+}
+
+const UNREACHABLE = "http://127.0.0.1:9"
+
+const sentToken = () => {
+  const header = hits[0]?.authorization ?? ""
+  return Buffer.from(header.replace(/^Basic /, ""), "base64")
+    .toString("utf8")
+    .replace(/:$/, "")
+}
+
+const writeConfigAt = (home: string, dir: string, config: object) => {
+  mkdirSync(join(home, dir), { recursive: true })
+  writeFileSync(join(home, dir, "config.json"), JSON.stringify(config))
+}
+
+describe("configuration", () => {
+  it("reports a missing host as an error naming SONARQUBE_HOST", async () => {
+    await withSettings({ SONARQUBE_TOKEN: TOKEN }, async () => {
+      const result = text(await qualityGate({ project: "my-project" }))
+      expect(result).toContain("No SonarQube host configured")
+      expect(result).toContain("SONARQUBE_HOST")
+      expect(result).not.toContain("SONARQUBE_DASH")
+      expect(result).not.toContain("sonarqube-dash-cli")
+    })
+  })
+
+  it("prefers SONARQUBE_HOST over the legacy host variables", async () => {
+    await withSettings(
+      {
+        SONARQUBE_HOST: serverUrl,
+        SONARQUBE_DASH_HOST: UNREACHABLE,
+        SONAR_HOST_URL: UNREACHABLE,
+      },
+      async () => {
+        expect(text(await projects({}))).not.toContain("Error:")
+        expect(hits).toHaveLength(1)
+      },
+    )
+  })
+
+  it.each(["SONARQUBE_DASH_HOST", "SONAR_HOST_URL"])(
+    "falls back to %s when SONARQUBE_HOST is unset",
+    async (name) => {
+      await withSettings({ [name]: serverUrl }, async () => {
+        expect(text(await projects({}))).not.toContain("Error:")
+        expect(hits).toHaveLength(1)
+      })
+    },
+  )
+
+  it("prefers SONARQUBE_TOKEN over the legacy token variables", async () => {
+    await withSettings(
+      {
+        SONARQUBE_HOST: serverUrl,
+        SONARQUBE_TOKEN: "new-token",
+        SONAR_TOKEN: "sonar-token",
+        SONARQUBE_DASH_TOKEN: "dash-token",
+      },
+      async () => {
+        await projects({})
+        expect(sentToken()).toBe("new-token")
+      },
+    )
+  })
+
+  it("falls back to SONAR_TOKEN, then SONARQUBE_DASH_TOKEN", async () => {
+    await withSettings(
+      {
+        SONARQUBE_HOST: serverUrl,
+        SONAR_TOKEN: "sonar-token",
+        SONARQUBE_DASH_TOKEN: "dash-token",
+      },
+      async () => {
+        await projects({})
+        expect(sentToken()).toBe("sonar-token")
+      },
+    )
+    hits.length = 0
+    await withSettings(
+      { SONARQUBE_HOST: serverUrl, SONARQUBE_DASH_TOKEN: "dash-token" },
+      async () => {
+        await projects({})
+        expect(sentToken()).toBe("dash-token")
+      },
+    )
+  })
+
+  it("names the token variable when the server answers 401", async () => {
+    failWith = 401
+    await withSettings(
+      { SONARQUBE_HOST: serverUrl, SONAR_TOKEN: "stale-token" },
+      async () => {
+        const result = text(await projects({}))
+        expect(result).toContain("HTTP 401")
+        expect(result).toContain("SONAR_TOKEN")
+        expect(result).not.toContain("stale-token")
+      },
+    )
+  })
+
+  it("asks for SONARQUBE_TOKEN on 401 without a token", async () => {
+    failWith = 401
+    await withSettings({ SONARQUBE_HOST: serverUrl }, async () => {
+      expect(text(await projects({}))).toContain("SONARQUBE_TOKEN")
+    })
+  })
+
+  describe("config file", () => {
+    let home: string
+
+    beforeEach(() => {
+      home = mkdtempSync(join(tmpdir(), "mcp-sonarqube-config-"))
+    })
+
+    afterEach(() => {
+      rmSync(home, { recursive: true, force: true })
+    })
+
+    it("reads ~/.config/sonarqube/config.json", async () => {
+      writeConfigAt(home, "sonarqube", { host: serverUrl, token: "file-token" })
+      await withSettings({ XDG_CONFIG_HOME: home }, async () => {
+        expect(text(await projects({}))).not.toContain("Error:")
+        expect(sentToken()).toBe("file-token")
+      })
+    })
+
+    it("still reads the legacy directory when the new one is absent", async () => {
+      writeConfigAt(home, "sonarqube-dash-cli", {
+        host: serverUrl,
+        token: "legacy-token",
+      })
+      await withSettings({ XDG_CONFIG_HOME: home }, async () => {
+        expect(text(await projects({}))).not.toContain("Error:")
+        expect(sentToken()).toBe("legacy-token")
+      })
+    })
+
+    it("prefers the new directory over the legacy one", async () => {
+      writeConfigAt(home, "sonarqube", { host: serverUrl, token: "new-token" })
+      writeConfigAt(home, "sonarqube-dash-cli", {
+        host: UNREACHABLE,
+        token: "legacy-token",
+      })
+      await withSettings({ XDG_CONFIG_HOME: home }, async () => {
+        expect(text(await projects({}))).not.toContain("Error:")
+        expect(sentToken()).toBe("new-token")
+      })
+    })
+
+    it("lets the environment override the file", async () => {
+      writeConfigAt(home, "sonarqube", {
+        host: UNREACHABLE,
+        token: "file-token",
+      })
+      await withSettings(
+        { XDG_CONFIG_HOME: home, SONARQUBE_HOST: serverUrl },
+        async () => {
+          expect(text(await projects({}))).not.toContain("Error:")
+          expect(sentToken()).toBe("file-token")
+        },
+      )
+    })
   })
 })

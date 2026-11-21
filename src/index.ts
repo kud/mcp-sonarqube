@@ -2,6 +2,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import {
+  MissingHostError,
   SonarQubeClient,
   formatDate,
   formatIssueAuthor,
@@ -337,9 +338,7 @@ server.registerTool(
 
 const main = async () => {
   if (!resolveConfig().host) {
-    console.error(
-      "SonarQube host is required: set SONAR_HOST_URL (or SONARQUBE_DASH_HOST), or `host` in the sonarqube-dash-cli config file",
-    )
+    console.error(new MissingHostError().message)
     process.exit(1)
   }
   const transport = new StdioServerTransport()
