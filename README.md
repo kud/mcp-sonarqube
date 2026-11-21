@@ -38,8 +38,8 @@ Or use without installing via `npx` (see Configuration below). Requires Node.js 
 Set the host and a token, then start the server over stdio:
 
 ```sh
-SONAR_HOST_URL=https://sonarqube.example.com \
-SONAR_TOKEN=your-token \
+SONARQUBE_HOST=https://sonarqube.example.com \
+SONARQUBE_TOKEN=your-token \
 npx -y @kud/mcp-sonarqube@latest
 ```
 
@@ -73,8 +73,8 @@ SonarQube MCP works with any MCP-compatible client — Claude Desktop, Cursor, C
       "command": "npx",
       "args": ["-y", "@kud/mcp-sonarqube@latest"],
       "env": {
-        "SONAR_HOST_URL": "https://sonarqube.example.com",
-        "SONAR_TOKEN": "<your-token>"
+        "SONARQUBE_HOST": "https://sonarqube.example.com",
+        "SONARQUBE_TOKEN": "<your-token>"
       }
     }
   }
@@ -96,14 +96,16 @@ If you use Claude Code, the server is also available as the `sonarqube` plugin f
 
 ### Environment variables
 
-Configuration is resolved by the `@kud/sonarqube` core. The first variable set wins; there is no default host, and the server exits at start-up without one.
+Configuration is resolved by the `@kud/sonarqube` core. There is no default host, and the server exits at start-up without one.
 
-| Setting | Environment variables, in order                                    | Required                  |
-| ------- | ------------------------------------------------------------------ | ------------------------- |
-| Host    | `SONARQUBE_DASH_HOST`, then `SONAR_HOST_URL`                       | Yes                       |
-| Token   | `SONARQUBE_DASH_TOKEN`, then `SONARQUBE_TOKEN`, then `SONAR_TOKEN` | Yes, for private projects |
+| Setting | Environment variable | Config file key | Required                  |
+| ------- | -------------------- | --------------- | ------------------------- |
+| Host    | `SONARQUBE_HOST`     | `host`          | Yes                       |
+| Token   | `SONARQUBE_TOKEN`    | `token`         | Yes, for private projects |
 
-Both can also come from the config file shared with the `sonarqube-dash` CLI, at `$XDG_CONFIG_HOME/sonarqube-dash-cli/config.json` (default `~/.config/sonarqube-dash-cli/config.json`), using the keys `host` and `token`. Environment variables take precedence over the file.
+The config file is `$XDG_CONFIG_HOME/sonarqube/config.json` (default `~/.config/sonarqube/config.json`). Environment variables take precedence over the file. When the server answers 401, the error names the variable to set.
+
+Older variable names and the previous config directory are still read as fallbacks, so existing set-ups keep working.
 
 ## Development
 
